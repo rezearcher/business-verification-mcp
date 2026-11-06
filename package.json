@@ -1,6 +1,6 @@
 {
   "name": "greyridge-business-verification-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zero-dependency MCP server: verify US businesses against official, keyless state registries (NY, CO, CT) with a scored match_confidence, entity status, formation date, type, registered agent, a CO UCC-lien profile, and a live OFAC SDN sanctions screen — each with the exact source URL and timestamp. No API key, no account.",
   "bin": {
     "greyridge-business-verification-mcp": "server.mjs"

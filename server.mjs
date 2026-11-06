@@ -24,7 +24,7 @@ const { verifyOne } = require(join(__dirname, 'src', 'verify.js'));
 const { loadOfacIndex, screenName, verdictFor } = require(join(__dirname, 'src', 'sanctions.js'));
 const { listStates } = require(join(__dirname, 'src', 'sources', 'index.js'));
 
-const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.1.0' };
+const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.2.0' };
 const DEFAULT_PROTOCOL = '2025-06-18';
 const SUPPORTED_PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
 
@@ -73,7 +73,10 @@ const TOOLS = [
       'retrieved_at timestamp. On a Colorado match it attaches a UCC-lien profile (active liens, ' +
       'secured parties, dates). By default every match is also screened against the OFAC SDN ' +
       'sanctions list. No-matches return a defensible audit record (no_match_reason + candidates), ' +
-      'never a bare false. Keyless, public-domain sources, no API key.',
+      'never a bare false. Every record carries a field_safety block: the registry-sourced free-text ' +
+      'fields (entity name, registered agent, address, candidate names) are screened for indirect ' +
+      'prompt injection and tool poisoning (OWASP LLM01 / MCP tool-poisoning) before your agent ' +
+      'ingests them — flag-only, the verbatim value is preserved. Keyless, public-domain sources, no API key.',
     inputSchema: {
       type: 'object',
       properties: {

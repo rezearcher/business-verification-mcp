@@ -12,6 +12,7 @@ const { buildRecord, noMatchRecord, recentlyFormed, deriveNoMatchReason } = requ
 const MAX_AUDIT_CANDIDATES = 8;
 const { searchUccLiens } = require('./ucc');
 const { screenSanctions } = require('./sanctions');
+const { screenFields } = require('./field_safety');
 
 // States with a keyless public UCC-lien lane wired in (buyer-ladder step 2).
 const UCC_STATES = new Set(['CO']);
@@ -118,6 +119,10 @@ async function verifyOne(row, cfg = {}) {
       rec.best_candidate_tier = overallBest.tier;
       rec.best_candidate_state = overallBest.source.state;
     }
+    // Screen every registry-sourced free-text field (incl. candidate names in
+    // the no-match audit) for indirect prompt injection / tool poisoning before
+    // the buyer's agent ingests the record. Flag-only; never mutates data.
+    rec.field_safety = screenFields(rec);
     return rec;
   }
 
@@ -176,6 +181,9 @@ async function verifyOne(row, cfg = {}) {
     }
   }
 
+  // Indirect prompt-injection / tool-poisoning screen on the verified record's
+  // registry-sourced free-text fields. Flag-only; never mutates data fields.
+  rec.field_safety = screenFields(rec);
   return rec;
 }
 

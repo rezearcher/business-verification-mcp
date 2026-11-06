@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rezearcher/business-verification-mcp",
   "title": "US Business Verification MCP Server",
-  "description": "KYB: verify US businesses vs state registries (NY/CO/CT) + OFAC SDN sanctions screening. Keyless.",
-  "version": "0.1.0",
+  "description": "KYB: verify US businesses (NY/CO/CT), OFAC SDN sanctions + prompt-injection field screen. Keyless.",
+  "version": "0.2.0",
   "websiteUrl": "https://github.com/rezearcher/business-verification-mcp",
   "repository": {
     "url": "https://github.com/rezearcher/business-verification-mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "greyridge-business-verification-mcp",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "transport": { "type": "stdio" }
     }
   ]
