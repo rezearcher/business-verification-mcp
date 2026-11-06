@@ -1,5 +1,7 @@
 # US Business Verification — MCP Server
 
+[![MCP server](https://glama.ai/mcp/servers/rezearcher/business-verification-mcp/badges/score.svg)](https://glama.ai/mcp/servers/rezearcher/business-verification-mcp)
+
 A zero-dependency [Model Context Protocol](https://modelcontextprotocol.io) server that verifies
 US businesses against **official, keyless state registries** and screens them against the **live
 OFAC SDN sanctions list** — the know-your-business (KYB) checks an agent needs before it trusts a
