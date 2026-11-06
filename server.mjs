@@ -64,6 +64,7 @@ const TOOLS = [
   {
     name: 'verify_business',
     description:
+      'KYB / know-your-business verification. ' +
       'Verify one or more US businesses against official, keyless state business-registry sources ' +
       '(currently NY, CO, CT). Each business may be a bare name string ("Palantir Technologies") or ' +
       'an object {name, state}. Returns one record per input with a scored match_confidence, the ' +
@@ -114,6 +115,7 @@ const TOOLS = [
   {
     name: 'screen_sanctions',
     description:
+      'OFAC SDN sanctions screening / watchlist screen per name. ' +
       'Screen one or more names directly against the live OFAC SDN (Specially Designated Nationals) ' +
       'sanctions list — no state lookup. Returns per-name verdict (clear | potential_match | match), ' +
       'matched program(s), the alias or primary name that matched, a confidence score, and the exact ' +

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rezearcher/business-verification-mcp",
   "title": "US Business Verification MCP Server",
-  "description": "Verify US businesses vs official state registries (NY/CO/CT) + live OFAC SDN screen. Keyless stdio.",
+  "description": "KYB: verify US businesses vs state registries (NY/CO/CT) + OFAC SDN sanctions screening. Keyless.",
   "version": "0.1.0",
   "websiteUrl": "https://github.com/rezearcher/business-verification-mcp",
   "repository": {
