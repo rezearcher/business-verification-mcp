@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rezearcher/business-verification-mcp",
+  "title": "US Business Verification MCP Server",
+  "description": "Verify US businesses vs official state registries (NY/CO/CT) + live OFAC SDN screen. Keyless stdio.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/rezearcher/business-verification-mcp",
+  "repository": {
+    "url": "https://github.com/rezearcher/business-verification-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "greyridge-business-verification-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
