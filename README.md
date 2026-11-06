@@ -79,6 +79,26 @@ npx github:rezearcher/business-verification-mcp
 The server speaks MCP stdio (newline-delimited JSON-RPC 2.0). It boots instantly and pulls in no
 transitive dependencies.
 
+### Hosted (remote) — no local process
+
+The same server runs hosted over Streamable HTTP, so an agent can connect without running anything
+locally. This is the entry listed in the MCP Registry (`ai.greyridgesignals/business-verification-mcp`).
+
+```json
+{
+  "mcpServers": {
+    "business-verification": {
+      "type": "streamable-http",
+      "url": "https://u7yyg5ac6m5p9psrf.apify.actor/mcp",
+      "headers": { "Authorization": "Bearer <APIFY_TOKEN>" }
+    }
+  }
+}
+```
+
+Create a free token at <https://console.apify.com/account/integrations>. No-match lookups and
+sanctions screens are free; each verified match is metered per the hosted pay-per-event price.
+
 ## Example
 
 ```jsonc

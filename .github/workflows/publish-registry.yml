@@ -1,10 +1,12 @@
 name: publish-registry
 
-# Keep the MCP Registry listing in sync with the shipped server.
-# The namespace io.github.rezearcher/* is owned by this repo's owner, so the
-# registry authenticates us via GitHub Actions OIDC — no stored secret, no
-# interactive login, no human in the loop. Edit server.json and push; the live
-# discovery surface updates itself.
+# Keep the MCP Registry listing in sync with the shipped server.json.
+# The namespace ai.greyridgesignals/* is DNS-verified (TXT record on
+# greyridgesignals.ai), so the registry authenticates us with the namespace
+# signing key — no interactive login, no human in the loop. The key lives in the
+# MCP_DNS_PRIVATE_KEY repo secret (hex ed25519 seed; grants registry-publish for
+# our namespace only, revocable by rotating the DNS TXT record). Edit server.json,
+# bump the version, push; the live discovery surface updates itself.
 on:
   push:
     branches: [master, main]
@@ -14,7 +16,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write   # required for github-oidc auth to the registry
   contents: read
 
 jobs:
@@ -35,8 +36,10 @@ jobs:
       - name: Validate server.json
         run: ./mcp-publisher validate
 
-      - name: Authenticate via GitHub OIDC
-        run: ./mcp-publisher login github-oidc
+      - name: Authenticate via DNS (namespace signing key)
+        run: ./mcp-publisher login dns --domain greyridgesignals.ai --private-key "$MCP_DNS_PRIVATE_KEY"
+        env:
+          MCP_DNS_PRIVATE_KEY: ${{ secrets.MCP_DNS_PRIVATE_KEY }}
 
       - name: Publish to MCP Registry
         run: ./mcp-publisher publish
