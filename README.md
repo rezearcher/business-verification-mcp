@@ -50,10 +50,13 @@ is derived from the live source registry — `list_states` always reports the tr
 
 | Tool | What it does |
 |------|--------------|
-| `verify_business` | Verify one or more businesses (names or `{name, state}`). Scored match, status, formation, registered agent, CO UCC profile, OFAC screen, prompt-injection field screen, provenance. |
+| `verify_business` | Verify one or more businesses by **name** (or `{name, state}`). Scored match, status, formation, registered agent, CO UCC profile, OFAC screen, prompt-injection field screen, provenance. |
+| `lookup_entity` | Authoritative lookup of **one** business by its registry `entity_id` within a state — no fuzzy scoring, the canonical row (`match_tier: exact_id`, confidence 1.0). Same full record + UCC/OFAC/field_safety. |
+| `search_entities` | **Enumerate** businesses in a state whose name begins with a fragment — a name-ordered list of candidates (name, id, status, type, formation, agent, source_url). The "list the companies in this state" surface. |
 | `screen_sanctions` | Screen names directly against the live OFAC SDN list. Per-name verdict (`clear` / `potential_match` / `match`), program, matched alias, confidence, source URL. |
 | `list_states` | The states verifiable right now and how each is addressed. No network call. |
-| `get_hosted_access` | Describes the hosted batch rail for high-volume, metered runs. No network call, no payment. |
+
+**Which tool?** Have a name → `verify_business`. Have the registry id → `lookup_entity`. Want to browse a name stem → `search_entities`. OFAC only, no registry → `screen_sanctions`.
 
 ## Install & run
 
@@ -96,9 +99,10 @@ anything locally and without any token. This is the entry listed in the MCP Regi
 }
 ```
 
-No token, no account. `verify_business`, `screen_sanctions`, `list_states` and `get_hosted_access`
-all answer with no credentials. For managed high-volume batch runs with per-match metered billing,
-`get_hosted_access` returns [the hosted rail](https://apify.com/greyridge-signals/us-business-verification).
+No token, no account. `verify_business`, `lookup_entity`, `search_entities`, `screen_sanctions` and
+`list_states` all answer with no credentials. For managed high-volume batch runs with per-match
+metered billing, each result links [the hosted rail](https://apify.com/greyridge-signals/us-business-verification)
+in its `see_also`.
 
 ## Example
 

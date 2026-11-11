@@ -10,26 +10,21 @@
 // "Administratively Dissolved", ...), registered agent, principal address and
 // formation date in one dataset.
 
-const { fetchCandidates } = require('./socrata');
+const { fetchCandidates, lookupById: lookupByIdRaw, enumerate: enumerateRaw } = require('./socrata');
 
 const DATASET = '4ykn-tg5h';
 const BASE = `https://data.colorado.gov/resource/${DATASET}.json`;
 const HUMAN = `https://data.colorado.gov/d/${DATASET}`;
+const NAME_FIELD = 'entityname';
+const ID_FIELD = 'entityid';
 
 function agentName(r) {
   const parts = [r.agentfirstname, r.agentmiddlename, r.agentlastname].filter(Boolean);
   return parts.length ? parts.join(' ') : null;
 }
 
-async function search(name, opts = {}) {
-  const rows = await fetchCandidates(BASE, {
-    nameField: 'entityname',
-    idField: 'entityid',
-    name,
-    limit: opts.limit || 25,
-    opts,
-  });
-  return rows.map((r) => ({
+function mapRow(r) {
+  return {
     _name: r.entityname,
     entityName: r.entityname,
     entityId: r.entityid,
@@ -41,7 +36,22 @@ async function search(name, opts = {}) {
     principalAddress: [r.principaladdress1, r.principaladdress2, r.principalcity, r.principalstate, r.principalzipcode]
       .filter(Boolean).join(', ') || null,
     sourceUrl: `${BASE}?$where=entityid='${r.entityid}'`,
-  }));
+  };
+}
+
+async function search(name, opts = {}) {
+  const rows = await fetchCandidates(BASE, { nameField: NAME_FIELD, idField: ID_FIELD, name, limit: opts.limit || 25, opts });
+  return rows.map(mapRow);
+}
+
+async function lookupById(id, opts = {}) {
+  const rows = await lookupByIdRaw(BASE, { idField: ID_FIELD, id, opts });
+  return rows.map(mapRow);
+}
+
+async function enumerate(name, opts = {}) {
+  const rows = await enumerateRaw(BASE, { nameField: NAME_FIELD, name, limit: opts.limit || 25, opts });
+  return rows.map(mapRow);
 }
 
 module.exports = {
@@ -49,5 +59,8 @@ module.exports = {
   label: 'Colorado Secretary of State',
   human_url: HUMAN,
   has_explicit_status: true,
+  id_field: ID_FIELD,
   search,
+  lookupById,
+  enumerate,
 };

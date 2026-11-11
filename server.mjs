@@ -20,11 +20,11 @@ import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { verifyOne } = require(join(__dirname, 'src', 'verify.js'));
+const { verifyOne, lookupEntity, enumerateEntities } = require(join(__dirname, 'src', 'verify.js'));
 const { loadOfacIndex, screenName, verdictFor } = require(join(__dirname, 'src', 'sanctions.js'));
 const { listStates } = require(join(__dirname, 'src', 'sources', 'index.js'));
 
-const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.2.0' };
+const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.5.0' };
 const DEFAULT_PROTOCOL = '2025-06-18';
 const SUPPORTED_PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
 
@@ -54,8 +54,9 @@ const PREMIUM = {
 const SEE_ALSO = {
   note:
     'These results are live and free. For managed high-volume batch verification with per-match ' +
-    'billing, call get_hosted_access.',
-  hosted_tool: 'get_hosted_access',
+    'metered billing, use the hosted rail below.',
+  hosted_rail_url: PREMIUM.url,
+  hosted_rail_price_usd_per_verified_match: PREMIUM.price_usd_per_verified_match,
 };
 
 // ---- tool definitions ------------------------------------------------------
@@ -72,11 +73,15 @@ const TOOLS = [
       'jurisdiction, registered_agent and principal_address — plus the exact source_url and ' +
       'retrieved_at timestamp. On a Colorado match it attaches a UCC-lien profile (active liens, ' +
       'secured parties, dates). By default every match is also screened against the OFAC SDN ' +
-      'sanctions list. No-matches return a defensible audit record (no_match_reason + candidates), ' +
-      'never a bare false. Every record carries a field_safety block: the registry-sourced free-text ' +
-      'fields (entity name, registered agent, address, candidate names) are screened for indirect ' +
-      'prompt injection and tool poisoning (OWASP LLM01 / MCP tool-poisoning) before your agent ' +
-      'ingests them — flag-only, the verbatim value is preserved. Keyless, public-domain sources, no API key.',
+      'sanctions list (set includeSanctions:false to skip). No-matches return a defensible audit ' +
+      'record (no_match_reason + candidates), never a bare false. Every record carries a field_safety ' +
+      'block: the registry-sourced free-text fields (entity name, registered agent, address, candidate ' +
+      'names) are screened for indirect prompt injection and tool poisoning (OWASP LLM01 / MCP ' +
+      'tool-poisoning) before your agent ingests them — flag-only, the verbatim value is preserved. ' +
+      'WHEN TO USE: you have a business NAME. If you already hold the registry entity_id use ' +
+      'lookup_entity (exact, no scoring); to list many businesses by a name prefix use search_entities; ' +
+      'for an OFAC-only check with no registry lookup use screen_sanctions. Keyless, public-domain ' +
+      'sources, no API key.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -124,7 +129,10 @@ const TOOLS = [
       'matched program(s), the alias or primary name that matched, a confidence score, and the exact ' +
       'OFAC source URL. The list is downloaded live per call (freshness: delisted entities correctly ' +
       'return clear). Matching uses distinctiveness learned from the list itself (IDF-weighted ' +
-      'contiguous-phrase containment), not a naive substring, to suppress false positives.',
+      'contiguous-phrase containment), not a naive substring, to suppress false positives. ' +
+      'WHEN TO USE: a pure OFAC watchlist check on names, with NO state registry lookup. If you want ' +
+      'to verify a business in a registry (which already includes this OFAC screen on each match), use ' +
+      'verify_business instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,12 +160,50 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
-    name: 'get_hosted_access',
+    name: 'lookup_entity',
     description:
-      'Describe the hosted batch verification rail available beyond this free server: the same core ' +
-      'run managed at high volume with per-match metered billing (pay-per-event, USD, billed only on ' +
-      'a verified match). Returns the rail URL, price, and what it adds. No network call, no payment.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'Authoritative lookup of ONE business by its registry entity_id within a state. Unlike ' +
+      'verify_business this does NO fuzzy name matching — the entity_id is the registry primary key, so ' +
+      'a hit is the single canonical row (match_confidence 1.0, match_tier "exact_id"). Returns the ' +
+      'same full record as a verified match: status (+ normalized), entity_type, formation_date, ' +
+      'jurisdiction, registered_agent, principal_address, source_url, the CO UCC-lien profile and OFAC ' +
+      'screen where applicable, and a field_safety block. WHEN TO USE: you already have an entity_id ' +
+      '(e.g. from a prior verify_business or search_entities result) and want to re-resolve it exactly ' +
+      'or refresh its status. If you only have a name, use verify_business or search_entities. ' +
+      'matched=false (never fabricated) when the id is unknown or the state is unsupported.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', description: 'Required 2-letter state the entity_id belongs to (NY, CO, CT).' },
+        entityId: { type: 'string', description: 'The registry entity_id to resolve (as returned in a prior result).' },
+        includeUcc: { type: 'boolean', description: 'Attach the CO UCC-lien profile on a Colorado entity. Default true.', default: true },
+        includeSanctions: { type: 'boolean', description: 'Run the OFAC SDN screen on the resolved entity. Default true.', default: true },
+      },
+      required: ['state', 'entityId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_entities',
+    description:
+      'Browse / enumerate businesses within ONE state whose official name begins with (then contains) a ' +
+      'fragment — the "list the companies in this state" surface. Unlike verify_business (which collapses ' +
+      'to the single best match) this returns a bounded, name-ordered LIST of candidate entities, each ' +
+      'with entity_name, entity_id, status, entity_type, formation_date, jurisdiction, registered_agent ' +
+      'and source_url, plus a field_safety screen over the batch. WHEN TO USE: you want to discover or ' +
+      'disambiguate the entities under a name stem (e.g. all "ACME *" filings in Colorado), or collect ' +
+      'entity_ids to feed lookup_entity. For a single known business use verify_business; for a known ' +
+      'id use lookup_entity. Keyless, public-domain official registries.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', description: 'Required 2-letter state to enumerate within (NY, CO, CT).' },
+        name: { type: 'string', description: 'Name fragment to match from the start of the entity name (min 2 chars).' },
+        limit: { type: 'integer', description: 'Max entities to return. Default 25, max 50.', default: 25 },
+      },
+      required: ['state', 'name'],
+      additionalProperties: false,
+    },
   },
 ];
 
@@ -267,8 +313,27 @@ function toolListStates() {
   };
 }
 
-function toolGetHostedAccess() {
-  return { ...PREMIUM, note: 'The verify_business and screen_sanctions tools on this server are free and keyless. The hosted rail is for managed, high-volume, metered batch runs.' };
+async function toolLookupEntity(args) {
+  const state = args?.state ? String(args.state).toUpperCase() : '';
+  const entityId = args?.entityId != null ? String(args.entityId) : '';
+  let sanctionsIndex = null;
+  if (args?.includeSanctions !== false) {
+    try { sanctionsIndex = (await loadOfacIndex({ timeoutMs: 45000 })).index; } catch { /* degrade open */ }
+  }
+  const rec = await lookupEntity({ state, entityId }, {
+    includeUcc: args?.includeUcc !== false,
+    includeSanctions: args?.includeSanctions !== false,
+    sanctionsIndex,
+    timeoutMs: 20000,
+  });
+  return { ...rec, see_also: SEE_ALSO };
+}
+
+async function toolSearchEntities(args) {
+  const state = args?.state ? String(args.state).toUpperCase() : '';
+  const name = args?.name != null ? String(args.name) : '';
+  const out = await enumerateEntities({ state, name, limit: args?.limit }, { timeoutMs: 20000 });
+  return { ...out, see_also: SEE_ALSO };
 }
 
 async function dispatchTool(name, args) {
@@ -276,7 +341,8 @@ async function dispatchTool(name, args) {
     case 'verify_business': return toolVerifyBusiness(args);
     case 'screen_sanctions': return toolScreenSanctions(args);
     case 'list_states': return toolListStates();
-    case 'get_hosted_access': return toolGetHostedAccess();
+    case 'lookup_entity': return toolLookupEntity(args);
+    case 'search_entities': return toolSearchEntities(args);
     default: throw new Error(`unknown tool: ${name}`);
   }
 }
@@ -301,11 +367,12 @@ async function handle(msg) {
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
         instructions:
-          'US business verification against official state sources. Call list_states for coverage, ' +
-          'verify_business to verify one or more businesses (scored match + status + formation + UCC + ' +
-          'OFAC screen), and screen_sanctions to check names against the live OFAC SDN list. These are ' +
-          'free and keyless. For managed high-volume batch runs with per-match billing, call ' +
-          'get_hosted_access.',
+          'US business verification against official state sources. Tool map: list_states for coverage; ' +
+          'verify_business when you have a NAME (scored match + status + formation + UCC + OFAC screen); ' +
+          'lookup_entity when you already have the registry entity_id (one authoritative row, no scoring); ' +
+          'search_entities to browse/enumerate every business in a state by a name prefix; screen_sanctions ' +
+          'for an OFAC-only watchlist check with no registry lookup. Free and keyless. A managed ' +
+          'high-volume batch rail with per-match billing is linked in each result (see_also).',
       });
       return;
     }

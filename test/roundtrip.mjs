@@ -76,7 +76,7 @@ function parseToolJSON(res) {
   // 4. tools/list
   const list = await rpc('tools/list', {});
   const names = (list.result?.tools || []).map((t) => t.name).sort();
-  assert(JSON.stringify(names) === JSON.stringify(['get_hosted_access', 'list_states', 'screen_sanctions', 'verify_business']), 'tools/list returns 4 tools');
+  assert(JSON.stringify(names) === JSON.stringify(['list_states', 'lookup_entity', 'screen_sanctions', 'search_entities', 'verify_business']), 'tools/list returns 5 functional tools');
   assert((list.result.tools || []).every((t) => t.inputSchema?.type === 'object'), 'every tool has an object inputSchema');
 
   // 5. list_states (offline) — coverage derived from the source registry
@@ -116,8 +116,8 @@ function parseToolJSON(res) {
   assert(obf.injection_suspected === true && obf.injection_obfuscation === true,
     'field_safety: obfuscated (zero-width + confusable) payload is de-obfuscated and flagged');
 
-  // 6c. verify_business result carries the honest hosted-rail see_also pointer
-  assert(!!ver.see_also && ver.see_also.hosted_tool === 'get_hosted_access', 'verify_business result carries see_also -> get_hosted_access');
+  // 6c. verify_business result carries the honest hosted-rail see_also pointer (now a direct URL, no dead tool)
+  assert(!!ver.see_also && /apify\.com\/greyridge-signals/.test(ver.see_also.hosted_rail_url || ''), 'verify_business result carries see_also -> hosted_rail_url');
 
   // 7. screen_sanctions LIVE — a clean name clears, a known SDN entity flags
   const scr = parseToolJSON(await rpc('tools/call', { name: 'screen_sanctions', arguments: { names: ['Acme Widgets LLC', 'Gazprom Neft'] } }));
@@ -126,10 +126,20 @@ function parseToolJSON(res) {
   assert(byName['Acme Widgets LLC']?.verdict === 'clear', 'clean name -> clear (no false positive)');
   assert(['match', 'potential_match'].includes(byName['Gazprom Neft']?.verdict), `known SDN entity flags (verdict=${byName['Gazprom Neft']?.verdict})`);
 
-  // 8. get_hosted_access (offline) — honest upsell to the metered batch rail
-  const host = parseToolJSON(await rpc('tools/call', { name: 'get_hosted_access', arguments: {} }));
-  assert(/apify\.com\/greyridge-signals\/us-business-verification/.test(host.url || ''), 'get_hosted_access returns the hosted rail URL');
-  assert(typeof host.price_usd_per_verified_match === 'number' && host.price_usd_per_verified_match > 0, 'hosted rail states a positive per-match price');
+  // 8. search_entities LIVE (CO) — enumerate a name stem into a candidate LIST
+  const se = parseToolJSON(await rpc('tools/call', { name: 'search_entities', arguments: { state: 'CO', name: 'Palantir', limit: 5 } }));
+  assert(se.state === 'CO' && Array.isArray(se.results) && se.count >= 1, `search_entities(CO, "Palantir") -> ${se.count} entities`);
+  assert((se.results || []).every((x) => x.entity_id && x.entity_name), 'every enumerated row carries entity_id + entity_name');
+  assert(!!se.field_safety && se.field_safety.screened === true, 'search_entities batch carries a field_safety screen');
+
+  // 8b. lookup_entity LIVE — resolve an id from the enumeration, exact (no scoring)
+  const seedId = (se.results || [])[0]?.entity_id;
+  const le = parseToolJSON(await rpc('tools/call', { name: 'lookup_entity', arguments: { state: 'CO', entityId: seedId, includeSanctions: false } }));
+  assert(le.matched === true && le.match_tier === 'exact_id' && le.match_confidence === 1.0, `lookup_entity(${seedId}) -> authoritative exact_id row`);
+  assert(le.entity_id === seedId, 'lookup_entity round-trips the enumerated entity_id');
+  // 8c. lookup_entity unknown id -> honest matched:false (never fabricated)
+  const leMiss = parseToolJSON(await rpc('tools/call', { name: 'lookup_entity', arguments: { state: 'CO', entityId: 'ZZZ-no-such-id', includeSanctions: false } }));
+  assert(leMiss.matched === false && leMiss.no_match_reason === 'id_not_found', 'lookup_entity unknown id -> matched:false id_not_found');
 
   // 9. error path: unknown method -> JSON-RPC -32601
   const bad = await rpc('does/not/exist', {});

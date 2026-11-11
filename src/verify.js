@@ -187,4 +187,111 @@ async function verifyOne(row, cfg = {}) {
   return rec;
 }
 
-module.exports = { verifyOne, DEFAULT_MIN_CONFIDENCE };
+// Authoritative lookup of ONE entity by its registry id within a state. Unlike
+// verifyOne this does no fuzzy scoring — the id is a primary key, so a hit is
+// the canonical row (confidence 1.0, tier 'exact_id'). Returns a buildRecord-
+// shaped record with the same depth enrichment (UCC/OFAC/field_safety) a
+// verified match carries. matched=false when the id is unknown or the state is
+// unsupported — never fabricated.
+async function lookupEntity({ state, entityId }, cfg = {}) {
+  const st = String(state || '').toUpperCase();
+  const id = String(entityId || '').trim();
+  const retrievedAt = new Date().toISOString();
+  const src = getSource(st);
+  if (!src || typeof src.lookupById !== 'function') {
+    return { matched: false, input_entity_id: id, input_state: st || null, error: 'unsupported_state', tried_states: st ? [st] : [], supported_states: listStates(), retrieved_at: retrievedAt };
+  }
+  if (!id) return { matched: false, input_entity_id: '', input_state: st, error: 'empty_entity_id', retrieved_at: retrievedAt };
+
+  let rows;
+  try {
+    rows = await src.lookupById(id, { fetchImpl: cfg.fetchImpl, timeoutMs: cfg.timeoutMs, appToken: cfg.appToken });
+  } catch (e) {
+    // A 400 on an exact-id query means the id can't exist in that typed column
+    // (e.g. non-numeric id against a numeric key) — that is a clean "not found",
+    // not an outage. Only a true transport/5xx failure is an error.
+    if (e && e.status === 400) {
+      const rec = { matched: false, input_entity_id: id, input_state: st, no_match_reason: 'id_not_found', note: 'No registry row carries this id in the named state; the id format did not match the registry key. Verify the state and id, or search by name.', tried_states: [st], retrieved_at: retrievedAt };
+      rec.field_safety = screenFields(rec);
+      return rec;
+    }
+    return { matched: false, input_entity_id: id, input_state: st, error: e && e.sourceOutage ? 'source_outage' : 'lookup_failed', detail: e && e.message ? e.message : String(e), retrieved_at: retrievedAt };
+  }
+  if (!rows || !rows.length) {
+    const rec = { matched: false, input_entity_id: id, input_state: st, no_match_reason: 'id_not_found', note: 'No registry row carries this id in the named state (verify the state and id, or search by name).', tried_states: [st], retrieved_at: retrievedAt };
+    rec.field_safety = screenFields(rec);
+    return rec;
+  }
+
+  const m = rows[0];
+  const rec = buildRecord({
+    inputName: m.entityName,
+    inputState: st,
+    matched: true,
+    confidence: 1.0,
+    tier: 'exact_id',
+    entityName: m.entityName,
+    entityId: m.entityId,
+    statusRaw: m.statusRaw,
+    entityType: m.entityType,
+    formationDate: m.formationDate,
+    jurisdiction: m.jurisdiction,
+    registeredAgent: m.registeredAgent,
+    principalAddress: m.principalAddress,
+    sourceState: src.state,
+    sourceUrl: m.sourceUrl,
+    retrievedAt,
+  });
+  rec.tried_states = [st];
+  rec.lookup = 'by_entity_id';
+
+  if (cfg.includeUcc !== false && UCC_STATES.has(src.state)) {
+    try { rec.ucc = await searchUccLiens(m.entityName, { fetchImpl: cfg.fetchImpl, timeoutMs: cfg.timeoutMs, appToken: cfg.appToken, minConfidence: DEFAULT_MIN_CONFIDENCE }); }
+    catch (_) { rec.ucc = { checked: true, jurisdiction: src.state, error: 'ucc_lookup_failed' }; }
+  }
+  if (cfg.includeSanctions !== false) {
+    try { rec.sanctions = await screenSanctions(m.entityName, { fetchImpl: cfg.fetchImpl, timeoutMs: cfg.timeoutMs, index: cfg.sanctionsIndex, registeredAgent: m.registeredAgent }); }
+    catch (_) { rec.sanctions = { checked: true, list: 'OFAC_SDN', verdict: 'unknown', error: 'sanctions_screen_failed' }; }
+  }
+  rec.field_safety = screenFields(rec);
+  return rec;
+}
+
+// Enumerate entities within ONE state whose name begins with (then contains) the
+// fragment — the "list businesses in this state" surface verifyOne (best-match
+// collapse) cannot provide. Returns a bounded, ordered candidate list; each row
+// is field_safety-screened. No billing semantics here (the caller meters).
+async function enumerateEntities({ state, name, limit }, cfg = {}) {
+  const st = String(state || '').toUpperCase();
+  const frag = String(name || '').trim();
+  const retrievedAt = new Date().toISOString();
+  const src = getSource(st);
+  if (!src || typeof src.enumerate !== 'function') {
+    return { state: st || null, error: 'unsupported_state', supported_states: listStates(), count: 0, results: [], retrieved_at: retrievedAt };
+  }
+  if (frag.length < 2) {
+    return { state: st, error: 'fragment_too_short', note: 'Provide at least 2 characters to enumerate.', count: 0, results: [], retrieved_at: retrievedAt };
+  }
+  const cap = Math.max(1, Math.min(Number(limit) || 25, 50));
+  let rows;
+  try {
+    rows = await src.enumerate(frag, { fetchImpl: cfg.fetchImpl, timeoutMs: cfg.timeoutMs, appToken: cfg.appToken, limit: cap });
+  } catch (e) {
+    return { state: st, error: e && e.sourceOutage ? 'source_outage' : 'enumerate_failed', detail: e && e.message ? e.message : String(e), count: 0, results: [], retrieved_at: retrievedAt };
+  }
+  const results = rows.map((m) => ({
+    entity_name: m.entityName || null,
+    entity_id: m.entityId || null,
+    status: m.statusRaw || null,
+    entity_type: m.entityType || null,
+    formation_date: m.formationDate ? String(m.formationDate).slice(0, 10) : null,
+    jurisdiction: m.jurisdiction || null,
+    registered_agent: m.registeredAgent || null,
+    source_url: m.sourceUrl || null,
+  }));
+  const out = { state: st, source: src.label, name_fragment: frag, count: results.length, results, retrieved_at: retrievedAt };
+  out.field_safety = screenFields(out);
+  return out;
+}
+
+module.exports = { verifyOne, lookupEntity, enumerateEntities, DEFAULT_MIN_CONFIDENCE };

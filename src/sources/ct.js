@@ -14,13 +14,15 @@
 // "Cancelled", "Merged", ...), a registration date, mailing address, and the
 // joined registered agent — field parity with Colorado.
 
-const { fetchCandidates, sodaGet, soqlQuote } = require('./socrata');
+const { fetchCandidates, sodaGet, soqlQuote, lookupById: lookupByIdRaw, enumerate: enumerateRaw } = require('./socrata');
 
 const DATASET = 'n7gp-d28j';
 const AGENTS = 'qh2m-n44y';
 const BASE = `https://data.ct.gov/resource/${DATASET}.json`;
 const AGENTS_BASE = `https://data.ct.gov/resource/${AGENTS}.json`;
 const HUMAN = `https://data.ct.gov/d/${DATASET}`;
+const NAME_FIELD = 'name';
+const ID_FIELD = 'id';
 
 // CT uses year 0001 as a null/placeholder registration date (e.g. Reserved names).
 function cleanDate(v) {
@@ -63,16 +65,8 @@ async function fetchAgents(ids, opts) {
   return map;
 }
 
-async function search(name, opts = {}) {
-  const rows = await fetchCandidates(BASE, {
-    nameField: 'name',
-    idField: 'id',
-    name,
-    limit: opts.limit || 25,
-    opts,
-  });
-  const agentMap = await fetchAgents(rows.map((r) => r.id), opts);
-  return rows.map((r) => ({
+function mapRow(r, agentMap) {
+  return {
     _name: r.name,
     entityName: r.name,
     entityId: r.accountnumber || r.id,
@@ -80,10 +74,39 @@ async function search(name, opts = {}) {
     entityType: null, // Business Master carries no entity-type column
     formationDate: cleanDate(r.date_registration),
     jurisdiction: null,
-    registeredAgent: agentMap[r.id] || null,
+    registeredAgent: (agentMap && agentMap[r.id]) || null,
     principalAddress: cleanAddress(r.mailing_address),
     sourceUrl: `${BASE}?$where=id='${r.id}'`,
-  }));
+  };
+}
+
+// Join registered agents onto a set of Business Master rows in one batched query.
+async function withAgents(rows, opts) {
+  const agentMap = await fetchAgents(rows.map((r) => r.id), opts);
+  return rows.map((r) => mapRow(r, agentMap));
+}
+
+async function search(name, opts = {}) {
+  const rows = await fetchCandidates(BASE, { nameField: NAME_FIELD, idField: ID_FIELD, name, limit: opts.limit || 25, opts });
+  return withAgents(rows, opts);
+}
+
+async function lookupById(id, opts = {}) {
+  // The exposed entityId is accountnumber||id, so accept EITHER the dataset
+  // primary key (id) or the public account number — whichever the agent echoes.
+  const q = soqlQuote(String(id).trim());
+  let rows;
+  try {
+    rows = await sodaGet(BASE, { $where: `id='${q}' OR accountnumber='${q}'`, $limit: '5' }, opts);
+  } catch (_) {
+    rows = await lookupByIdRaw(BASE, { idField: ID_FIELD, id, opts });
+  }
+  return withAgents(Array.isArray(rows) ? rows : [], opts);
+}
+
+async function enumerate(name, opts = {}) {
+  const rows = await enumerateRaw(BASE, { nameField: NAME_FIELD, name, limit: opts.limit || 25, opts });
+  return withAgents(rows, opts);
 }
 
 module.exports = {
@@ -91,5 +114,8 @@ module.exports = {
   label: 'Connecticut Secretary of the State',
   human_url: HUMAN,
   has_explicit_status: true,
+  id_field: ID_FIELD,
   search,
+  lookupById,
+  enumerate,
 };

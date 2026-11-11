@@ -91,4 +91,59 @@ async function fetchCandidates(baseUrl, { nameField, idField, name, limit = 25, 
   return out.slice(0, limit);
 }
 
-module.exports = { sodaGet, fetchCandidates, soqlQuote };
+// Exact lookup by the dataset's canonical id field. Authoritative (no fuzzy
+// scoring): the id is the primary key, so a hit is the one canonical row. Host
+// and field are fixed per adapter — no SSRF, no caller-arbitrary column.
+async function lookupById(baseUrl, { idField, id, limit = 1, opts = {} }) {
+  const rows = await sodaGet(baseUrl, {
+    $where: `${idField}='${soqlQuote(String(id).trim())}'`,
+    $limit: String(Math.max(1, Math.min(Number(limit) || 1, 10))),
+  }, opts);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Escape SoQL LIKE metacharacters so a caller's fragment is matched literally
+// (prevents an accidental '%'/'_' from widening the enumeration).
+function likeLiteral(v) {
+  return soqlQuote(String(v)).replace(/([%_\\])/g, '\\$1');
+}
+
+// Enumerate entities within ONE dataset whose name begins with (then contains)
+// the fragment. Distinct from fetchCandidates: returns the full ordered page,
+// not just scored near-misses — the "list businesses in this state" surface.
+async function enumerate(baseUrl, { nameField, name, limit = 25, opts = {} }) {
+  const core = String(name).trim();
+  const cap = Math.max(1, Math.min(Number(limit) || 25, 50));
+  const seen = new Set();
+  const out = [];
+  const push = (rows) => {
+    for (const r of rows || []) {
+      const key = JSON.stringify(r);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+  };
+  const lit = likeLiteral(core);
+  // Pass 1: prefix (starts-with) — the natural "browse" ordering.
+  try {
+    push(await sodaGet(baseUrl, {
+      $where: `upper(${nameField}) like upper('${lit}%')`,
+      $order: nameField,
+      $limit: String(cap),
+    }, opts));
+  } catch (_) { /* fall through to contains */ }
+  // Pass 2: contains — recall for names where the fragment is internal.
+  if (out.length < cap) {
+    try {
+      push(await sodaGet(baseUrl, {
+        $where: `upper(${nameField}) like upper('%${lit}%')`,
+        $order: nameField,
+        $limit: String(cap),
+      }, opts));
+    } catch (_) { /* keep whatever pass 1 found */ }
+  }
+  return out.slice(0, cap);
+}
+
+module.exports = { sodaGet, fetchCandidates, soqlQuote, lookupById, enumerate };
