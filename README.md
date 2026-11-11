@@ -81,23 +81,24 @@ transitive dependencies.
 
 ### Hosted (remote) — no local process
 
-The same server runs hosted over Streamable HTTP, so an agent can connect without running anything
-locally. This is the entry listed in the MCP Registry (`ai.greyridgesignals/business-verification-mcp`).
+The same server runs hosted over Streamable HTTP, **keyless** — an agent can connect without running
+anything locally and without any token. This is the entry listed in the MCP Registry
+(`ai.greyridgesignals/business-verification-mcp`).
 
 ```json
 {
   "mcpServers": {
     "business-verification": {
       "type": "streamable-http",
-      "url": "https://u7yyg5ac6m5p9psrf.apify.actor/mcp",
-      "headers": { "Authorization": "Bearer <APIFY_TOKEN>" }
+      "url": "https://business-verification-mcp.sigrunner.workers.dev/mcp"
     }
   }
 }
 ```
 
-Create a free token at <https://console.apify.com/account/integrations>. No-match lookups and
-sanctions screens are free; each verified match is metered per the hosted pay-per-event price.
+No token, no account. `verify_business`, `screen_sanctions`, `list_states` and `get_hosted_access`
+all answer with no credentials. For managed high-volume batch runs with per-match metered billing,
+`get_hosted_access` returns [the hosted rail](https://apify.com/greyridge-signals/us-business-verification).
 
 ## Example
 

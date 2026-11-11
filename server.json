@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.greyridgesignals/business-verification-mcp",
-  "title": "US Business Verification MCP Server",
-  "description": "KYB / know your business: verify US firms vs state registries + OFAC sanctions screen. Keyless.",
-  "version": "0.3.1",
-  "websiteUrl": "https://github.com/rezearcher/business-verification-mcp",
+  "title": "US Business Verification (KYB) MCP Server",
+  "description": "Keyless KYB: verify US businesses vs NY/CO/CT official registries + OFAC SDN screen. No API key.",
+  "version": "0.4.0",
+  "websiteUrl": "https://business-verification-mcp.sigrunner.workers.dev",
   "repository": {
     "url": "https://github.com/rezearcher/business-verification-mcp",
     "source": "github"
@@ -12,15 +12,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://u7yyg5ac6m5p9psrf.apify.actor/mcp",
-      "headers": [
-        {
-          "name": "Authorization",
-          "description": "Apify API token sent as 'Bearer <APIFY_TOKEN>'. Create a free token at https://console.apify.com/account/integrations. Verified matches are metered per the hosted pay-per-event price; no-match lookups and sanctions screens are free.",
-          "isRequired": true,
-          "isSecret": true
-        }
-      ]
+      "url": "https://business-verification-mcp.sigrunner.workers.dev/mcp"
     }
   ]
 }
