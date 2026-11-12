@@ -76,7 +76,9 @@ function parseToolJSON(res) {
   // 4. tools/list
   const list = await rpc('tools/list', {});
   const names = (list.result?.tools || []).map((t) => t.name).sort();
-  assert(JSON.stringify(names) === JSON.stringify(['list_states', 'lookup_entity', 'screen_sanctions', 'search_entities', 'verify_business']), 'tools/list returns 5 functional tools');
+  const expectedTools = ['list_states', 'lookup_entity', 'map_ownership', 'screen_sanctions', 'search_entities', 'verify_business'];
+  const missingTools = expectedTools.filter((t) => !names.includes(t));
+  assert(missingTools.length === 0, `tools/list advertises every expected tool (missing: ${missingTools.join(',') || 'none'}; has ${names.length})`);
   assert((list.result.tools || []).every((t) => t.inputSchema?.type === 'object'), 'every tool has an object inputSchema');
 
   // 5. list_states (offline) — coverage derived from the source registry
@@ -140,6 +142,20 @@ function parseToolJSON(res) {
   // 8c. lookup_entity unknown id -> honest matched:false (never fabricated)
   const leMiss = parseToolJSON(await rpc('tools/call', { name: 'lookup_entity', arguments: { state: 'CO', entityId: 'ZZZ-no-such-id', includeSanctions: false } }));
   assert(leMiss.matched === false && leMiss.no_match_reason === 'id_not_found', 'lookup_entity unknown id -> matched:false id_not_found');
+
+  // 8d. map_ownership LIVE — GLEIF corporate ownership / UBO graph (keyless Level-2)
+  const own = parseToolJSON(await rpc('tools/call', { name: 'map_ownership', arguments: { company: 'Alphabet Inc', maxChildren: 3 } }));
+  assert(own.resolved && /ALPHABET/i.test(own.resolved.name), `map_ownership("Alphabet Inc") -> resolved ${own.resolved && own.resolved.name}`);
+  assert(own.is_ultimate_parent === true, 'Alphabet flagged as ultimate parent (no reported parent)');
+  assert(own.subsidiaries && own.subsidiaries.total >= 30 && own.subsidiaries.sample.length === 3, `true subsidiary total (${own.subsidiaries.total}) + bounded sample`);
+  assert(own.subsidiaries.sample.some((n) => n.national_register && n.national_register.joinable), 'a subsidiary carries a joinable national_register hint (registeredAs join)');
+  assert(own.full_graph_locked && own.full_graph_locked.locked === true, 'recursive full tree gated to the hosted rail');
+  // 8e. map_ownership of a subsidiary -> multi-hop chain + UBO anchor
+  const ownSub = parseToolJSON(await rpc('tools/call', { name: 'map_ownership', arguments: { lei: '9845003T366A4EB2EE58' } }));
+  assert(ownSub.parent_chain_depth >= 1 && ownSub.ultimate_parent && /ALPHABET/i.test(ownSub.ultimate_parent.name), 'subsidiary shows a parent chain up to Alphabet (UBO anchor)');
+  // 8f. map_ownership with no args -> clean tool error
+  const ownBad = await rpc('tools/call', { name: 'map_ownership', arguments: {} });
+  assert(ownBad.result?.isError === true, 'map_ownership with no company/lei -> isError tool result');
 
   // 9. error path: unknown method -> JSON-RPC -32601
   const bad = await rpc('does/not/exist', {});

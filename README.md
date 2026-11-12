@@ -54,9 +54,10 @@ is derived from the live source registry — `list_states` always reports the tr
 | `lookup_entity` | Authoritative lookup of **one** business by its registry `entity_id` within a state — no fuzzy scoring, the canonical row (`match_tier: exact_id`, confidence 1.0). Same full record + UCC/OFAC/field_safety. |
 | `search_entities` | **Enumerate** businesses in a state whose name begins with a fragment — a name-ordered list of candidates (name, id, status, type, formation, agent, source_url). The "list the companies in this state" surface. |
 | `screen_sanctions` | Screen names directly against the live OFAC SDN list. Per-name verdict (`clear` / `potential_match` / `match`), program, matched alias, confidence, source URL. |
+| `map_ownership` | Trace a company's **corporate ownership graph / UBO** via the keyless **GLEIF** Global LEI relationship register (Level-2, CC0). Give a name or an LEI → the **ultimate parent** (control anchor), the **multi-hop parent chain** walked up level by level (not one hop), and the direct subsidiaries with the **true total count**. Every node carries `registeredAs` (its national-register number) + a `national_register` hint (FR SIREN, German HRB, …) joining the global graph to a per-country registry. |
 | `list_states` | The states verifiable right now and how each is addressed. No network call. |
 
-**Which tool?** Have a name → `verify_business`. Have the registry id → `lookup_entity`. Want to browse a name stem → `search_entities`. OFAC only, no registry → `screen_sanctions`.
+**Which tool?** Have a name → `verify_business`. Have the registry id → `lookup_entity`. Want to browse a name stem → `search_entities`. OFAC only, no registry → `screen_sanctions`. Need who ultimately owns a company (parents/subsidiaries/UBO) → `map_ownership`.
 
 ## Install & run
 
@@ -99,8 +100,8 @@ anything locally and without any token. This is the entry listed in the MCP Regi
 }
 ```
 
-No token, no account. `verify_business`, `lookup_entity`, `search_entities`, `screen_sanctions` and
-`list_states` all answer with no credentials. For managed high-volume batch runs with per-match
+No token, no account. `verify_business`, `lookup_entity`, `search_entities`, `screen_sanctions`,
+`map_ownership` and `list_states` all answer with no credentials. For managed high-volume batch runs with per-match
 metered billing, each result links [the hosted rail](https://apify.com/greyridge-signals/us-business-verification)
 in its `see_also`.
 
@@ -130,7 +131,11 @@ in its `see_also`.
 
 Each state source is a public-domain Socrata open-data dataset; the license is recorded per source
 before it is added, and a source whose terms prohibit this use is not included. The OFAC SDN list is
-a US-government work (17 U.S.C. §105, public domain).
+a US-government work (17 U.S.C. §105, public domain). The `map_ownership` tool uses the GLEIF Global
+LEI register (entity + Level-2 relationship data), published by GLEIF under CC0 1.0 Universal
+(public domain) — keyless, commercial use permitted (terms read 2026-11-12,
+https://www.gleif.org/en/lei-data/access-and-use-lei-data). Requests send
+`Accept: application/vnd.api+json` as api.gleif.org requires.
 
 ## Hosted batch rail
 

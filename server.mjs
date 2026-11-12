@@ -23,8 +23,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const { verifyOne, lookupEntity, enumerateEntities } = require(join(__dirname, 'src', 'verify.js'));
 const { loadOfacIndex, screenName, verdictFor } = require(join(__dirname, 'src', 'sanctions.js'));
 const { listStates } = require(join(__dirname, 'src', 'sources', 'index.js'));
+const { resolveLei, fetchRecord, relationParent, parentChain, directChildren } = require(join(__dirname, 'src', 'gleif_ownership.js'));
 
-const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.5.0' };
+const SERVER_INFO = { name: 'greyridge-business-verification-mcp', version: '0.7.0' };
 const DEFAULT_PROTOCOL = '2025-06-18';
 const SUPPORTED_PROTOCOLS = new Set(['2025-06-18', '2025-03-26', '2024-11-05']);
 
@@ -58,6 +59,23 @@ const SEE_ALSO = {
   hosted_rail_url: PREMIUM.url,
   hosted_rail_price_usd_per_verified_match: PREMIUM.price_usd_per_verified_match,
 };
+
+// Ownership-graph (GLEIF Level-2) upsell. The free result proves the capability and
+// answers the money questions (who ultimately controls this entity, does it own
+// subsidiaries), bounded to one page + the multi-hop parent chain. The hosted rail
+// delivers the FULL recursive N-level subsidiary tree and resolves each node's
+// registeredAs against the live national register (a confirmed join, not a hint).
+const OWNERSHIP_LOCKED_FIELDS = [
+  'full recursive N-level subsidiary tree (every level, every child)',
+  'every direct child beyond the free sample page',
+  'registeredAs CONFIRMED against the live national register per node (not just hinted)',
+  'ultimate-children roll-up count + leaf enumeration',
+];
+const ownershipLockedBlock = () => ({
+  locked: true,
+  withheld: OWNERSHIP_LOCKED_FIELDS,
+  unlock: `Full recursive ownership tree + confirmed national-register joins via the hosted rail (${PREMIUM.url}).`,
+});
 
 // ---- tool definitions ------------------------------------------------------
 
@@ -205,6 +223,36 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'map_ownership',
+    description:
+      'Corporate OWNERSHIP GRAPH / UBO (ultimate beneficial owner) tracer for a company. ' +
+      'Given a company NAME or its LEI, trace its ownership using the keyless GLEIF Global LEI ' +
+      'relationship register (Level-2, CC0 public domain): the ultimate parent (the UBO control ' +
+      'anchor), the full multi-hop parent CHAIN walked up level by level (not a single hop), and the ' +
+      'direct subsidiaries with the TRUE total count. Each node also carries registeredAs — its ' +
+      'authoritative national-register number (French SIREN, German HRB, etc.) — plus a ' +
+      'national_register hint naming which official register can confirm it, the connected link ' +
+      'between the global ownership graph and a per-country registry that flat LEI scrapers do not ' +
+      'join. Returns the UBO anchor, the parent chain, and one bounded page of direct children with ' +
+      'the real subsidiary total; the full recursive N-level subsidiary tree and each node\'s ' +
+      'registeredAs CONFIRMED against the live national register are delivered by the hosted rail in ' +
+      'see_also. WHEN TO USE: you need who ultimately owns/controls a company, or its corporate family ' +
+      '(parents + subsidiaries). For a plain is-it-real/active check use verify_business; for an OFAC ' +
+      'watchlist check use screen_sanctions. Keyless, no API key. Resolution is guarded (a name only ' +
+      'resolves on a strong leading-token match), and a company with no reported parent is honestly ' +
+      'reported as an ultimate parent, not an error.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company: { type: 'string', description: 'Company legal name to resolve to an LEI (e.g. "Alphabet Inc"). Provide this OR lei.' },
+        lei: { type: 'string', description: 'A 20-char LEI to trace directly (skips name resolution). Provide this OR company.' },
+        maxChildren: { type: 'integer', description: 'Max direct subsidiaries in the free sample page. Default 10, max 15 (the full set is on the hosted rail).', default: 10 },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ---- tool handlers ---------------------------------------------------------
@@ -336,6 +384,92 @@ async function toolSearchEntities(args) {
   return { ...out, see_also: SEE_ALSO };
 }
 
+function ownNode(n) {
+  if (!n || typeof n !== 'object') return n;
+  return {
+    lei: n.lei ?? null,
+    name: n.name ?? null,
+    country: n.country ?? null,
+    status: n.status ?? null,
+    registered_as: n.registered_as ?? null,
+    national_register: n.national_register ?? null,
+    source_url: n.source_url ?? null,
+  };
+}
+
+const OWN_BUDGET_MS = 12000;
+
+async function toolMapOwnership(args) {
+  const company = typeof args?.company === 'string' ? args.company.trim() : '';
+  let lei = typeof args?.lei === 'string' ? args.lei.trim().toUpperCase() : '';
+  const maxChildren = Math.min(Math.max(1, Number(args?.maxChildren) || 10), 15);
+  if (!company && !lei) throw new Error('provide `company` (a name) or `lei` (a 20-char LEI)');
+
+  let resolution = null;
+  if (!lei) {
+    resolution = await resolveLei(company, { timeoutMs: OWN_BUDGET_MS });
+    if (!resolution.lei) {
+      return {
+        query: { company, maxChildren },
+        resolved: null,
+        no_resolution_reason: 'no_strong_lei_match',
+        note:
+          'No GLEIF LEI resolved with a strong leading-token match for this name. LEI coverage is ' +
+          'incomplete for small/private firms; try the exact legal name or pass the LEI directly. ' +
+          '(Absence is reported, never a fabricated owner.)',
+        candidate_count: Array.isArray(resolution.candidates) ? resolution.candidates.length : 0,
+        see_also: SEE_ALSO,
+      };
+    }
+    lei = resolution.lei;
+  }
+  if (!/^[A-Z0-9]{20}$/.test(lei)) throw new Error('`lei` must be a 20-character LEI');
+
+  const entity = await fetchRecord(lei, { timeoutMs: OWN_BUDGET_MS, withHint: true });
+  if (!entity) {
+    return {
+      query: { company: company || undefined, lei, maxChildren },
+      resolved: null,
+      no_resolution_reason: 'lei_not_found',
+      note: 'That LEI is not present in the GLEIF register.',
+      see_also: SEE_ALSO,
+    };
+  }
+  const [chain, ultimate, children] = await Promise.all([
+    parentChain(lei, { maxHops: 6, timeoutMs: OWN_BUDGET_MS }).catch(() => []),
+    relationParent(lei, 'ultimate-parent', { timeoutMs: OWN_BUDGET_MS }).catch(() => null),
+    directChildren(lei, { limit: maxChildren, timeoutMs: OWN_BUDGET_MS }).catch(() => ({ total: 0, sample: [] })),
+  ]);
+
+  const isUltimate = (!ultimate || ultimate.lei === lei) && chain.length === 0;
+  const sample = (children.sample || []).map(ownNode);
+  const joinableCount = sample.filter((n) => n.national_register && n.national_register.joinable).length;
+
+  return {
+    query: { company: company || undefined, lei, maxChildren },
+    resolved: ownNode(entity),
+    is_ultimate_parent: isUltimate,
+    ultimate_parent: ultimate && ultimate.lei !== lei ? ownNode(ultimate) : null,
+    parent_chain: chain.map(ownNode),
+    parent_chain_depth: chain.length,
+    subsidiaries: {
+      total: children.total || 0,
+      sample,
+      sample_count: sample.length,
+      has_more: (children.total || 0) > sample.length,
+    },
+    connected_registry: {
+      note:
+        'Each node carries registeredAs (its national-register number) and a national_register hint. The ' +
+        'hosted rail resolves these against the live FR/NO/CZ/FI/PL registers for a confirmed cross-join.',
+      joinable_in_sample: joinableCount,
+    },
+    full_graph_locked: ownershipLockedBlock(),
+    source: 'GLEIF Global LEI relationship register (CC0 public domain, keyless)',
+    see_also: SEE_ALSO,
+  };
+}
+
 async function dispatchTool(name, args) {
   switch (name) {
     case 'verify_business': return toolVerifyBusiness(args);
@@ -343,6 +477,7 @@ async function dispatchTool(name, args) {
     case 'list_states': return toolListStates();
     case 'lookup_entity': return toolLookupEntity(args);
     case 'search_entities': return toolSearchEntities(args);
+    case 'map_ownership': return toolMapOwnership(args);
     default: throw new Error(`unknown tool: ${name}`);
   }
 }
@@ -371,7 +506,9 @@ async function handle(msg) {
           'verify_business when you have a NAME (scored match + status + formation + UCC + OFAC screen); ' +
           'lookup_entity when you already have the registry entity_id (one authoritative row, no scoring); ' +
           'search_entities to browse/enumerate every business in a state by a name prefix; screen_sanctions ' +
-          'for an OFAC-only watchlist check with no registry lookup. Free and keyless. A managed ' +
+          'for an OFAC-only watchlist check with no registry lookup; map_ownership to trace a company\'s ' +
+          'corporate ownership graph / UBO (ultimate parent + subsidiaries) via the keyless GLEIF Global ' +
+          'LEI register. Free and keyless. A managed ' +
           'high-volume batch rail with per-match billing is linked in each result (see_also).',
       });
       return;
